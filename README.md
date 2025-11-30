@@ -129,7 +129,7 @@ Le système cherche automatiquement `model.h5` dans cet ordre :
    - Lancer l'analyse : le modèle TensorFlow traite chaque image
    - Suivi du statut en temps réel
 
-3. **Visualisation**
+3. **Visualisation**j
    - Onglet "📊 Visualisation & Filtrage" : Consulter les prédictions
    - Filtrer par prédiction (sain/malade) et annotation
    - Trier les résultats

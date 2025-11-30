@@ -3,7 +3,7 @@ import os
 from dicom_importer import DICOMImporter
 from model_interface import ModelInterface
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from PIL import Image
 import uuid
 
@@ -157,7 +157,8 @@ class PreparatorView:
                             )
                             # Réinitialiser le file_uploader en changeant la clé
                             st.session_state.image_uploader_key += 1
-                            st.rerun()
+                            # Ne pas faire de rerun pour éviter le refresh
+                            st.success("✅ Import terminé. Vous pouvez continuer à importer d'autres images.")
         
         # Afficher les fichiers récemment importés
         st.divider()
@@ -247,7 +248,7 @@ class PreparatorView:
         if error_count > 0:
             st.error(f"❌ {error_count} fichier(s) en erreur")
         
-        st.rerun()
+        # Ne pas faire de rerun pour éviter le refresh
     
     def _import_simple_images(self, uploaded_images, patient_ids, patient_metadata_dict):
         """Importe des images simples (PNG, JPG, etc.) avec un patient_id par image"""
@@ -318,7 +319,7 @@ class PreparatorView:
                     'patient_id': patient_id,
                     'file_path': uploaded_image.name,
                     'image_path': image_path,
-                    'exam_date': exam_date.strftime("%Y-%m-%d") if isinstance(exam_date, datetime.date) else str(exam_date),
+                    'exam_date': exam_date.strftime("%Y-%m-%d") if isinstance(exam_date, date) else str(exam_date),
                     'exam_time': datetime.now().strftime("%H%M%S"),
                     'modality': 'CR',  # Computed Radiography
                     'body_part': 'CHEST',
