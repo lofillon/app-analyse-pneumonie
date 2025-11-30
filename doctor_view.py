@@ -3,6 +3,9 @@ import os
 import json
 import pandas as pd
 from datetime import datetime
+import shutil
+import zipfile
+from pathlib import Path
 
 class DoctorView:
     """Vue pour le rôle Médecin"""
@@ -14,9 +17,10 @@ class DoctorView:
         st.header("👨‍⚕️ Vue Médecin")
         
         # Navigation par onglets
-        tab1, tab2, tab3 = st.tabs([
+        tab1, tab2, tab3, tab4 = st.tabs([
             "📋 Liste des Patients à Revoir",
-            "💊 Démarrer le Traitement & Suivi",
+            "💊 Démarrer le Traitement",
+            "📋 Suivi du Traitement",
             "📊 Résultats & Export"
         ])
         
@@ -27,6 +31,9 @@ class DoctorView:
             self._render_treatment_tab()
         
         with tab3:
+            self._render_treatment_followup_tab()
+        
+        with tab4:
             self._render_results_tab()
     
     def _render_patient_list_tab(self):
@@ -301,7 +308,7 @@ class DoctorView:
             # Bouton pour démarrer un traitement
             if st.button("🚀 Démarrer un Traitement", type="primary"):
                 st.session_state.start_treatment_for = image_id
-                st.info("💡 Allez dans l'onglet '💊 Démarrer le Traitement & Suivi' pour compléter le formulaire")
+                st.info("💡 Allez dans l'onglet '💊 Démarrer le Traitement' pour compléter le formulaire")
                 st.rerun()
         
         # Historique des modifications
@@ -320,11 +327,8 @@ class DoctorView:
             st.info("Aucun historique disponible")
     
     def _render_treatment_tab(self):
-        """Onglet pour démarrer le traitement et suivre les patients"""
-        st.subheader("💊 Démarrer le Traitement et Liste de Suivi")
-        
-        # Section 1: Démarrer un traitement
-        st.subheader("🚀 Démarrer un Traitement")
+        """Onglet pour démarrer le traitement"""
+        st.subheader("💊 Démarrer un Traitement")
         
         # Récupérer les patients validés par le médecin (pas encore en traitement)
         images = self.data_manager.get_all_images()
@@ -452,10 +456,10 @@ class DoctorView:
                         )
                         st.success(f"✅ Traitement démarré pour le patient {patient_id}")
                         st.rerun()
-        
-        # Section 2: Liste de suivi des patients en traitement
-        st.divider()
-        st.subheader("📋 Liste de Suivi des Patients en Traitement")
+    
+    def _render_treatment_followup_tab(self):
+        """Onglet pour suivre les patients en traitement"""
+        st.subheader("📋 Suivi du Traitement")
         
         patients_in_treatment = self.data_manager.get_patients_in_treatment()
         
@@ -548,6 +552,198 @@ class DoctorView:
                             st.success("✅ Statut mis à jour")
                             st.rerun()
     
+    def _generate_complete_export(self, validated_images, export_format, include_images, split_dataset):
+        """Génère un export complet avec plusieurs formats"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            export_dir = f"data/exports/export_{timestamp}"
+            os.makedirs(export_dir, exist_ok=True)
+            
+            results = {}
+            
+            # Préparer les données complètes
+            export_data = []
+            patients_data = []
+            
+            for v in validated_images:
+                img = v['image']
+                ann = v['annotation']
+                patient = self.data_manager.get_patient_by_id(img.get('patient_id'))
+                pred = self.data_manager.get_prediction_by_image(img['id'])
+                
+                # Données pour CSV et analyses statistiques
+                patient_row = {
+                    'image_id': img['id'],
+                    'patient_id': img.get('patient_id', 'N/A'),
+                    'label': ann.get('label', 'N/A'),  # malade ou sain
+                    'label_numeric': 1 if ann.get('label') == 'malade' else 0,
+                    'sexe': patient.get('metadata', {}).get('sex', 'N/A') if patient else 'N/A',
+                    'age': patient.get('metadata', {}).get('age', 'N/A') if patient else 'N/A',
+                    'zone_geographique': patient.get('metadata', {}).get('institution_name', 'N/A') if patient else 'N/A',
+                    'station': patient.get('metadata', {}).get('station_name', 'N/A') if patient else 'N/A',
+                    'date_examen': img.get('exam_date', 'N/A'),
+                    'modality': img.get('modality', 'N/A'),
+                    'body_part': img.get('body_part', 'N/A'),
+                    'patient_position': img.get('patient_position', 'N/A'),
+                    'view_position': img.get('view_position', 'N/A'),
+                    'prediction_originale': pred.get('label', 'N/A') if pred else 'N/A',
+                    'confidence_modele': pred.get('confidence', 0.0) if pred else 0.0,
+                    'confidence_medecin': ann.get('confidence', 0.0),
+                    'ground_truth': ann.get('additional_info', {}).get('ground_truth', 'Non déterminé'),
+                    'validated_by': ann.get('user_name', 'N/A'),
+                    'validated_at': ann.get('created_at', 'N/A'),
+                    'image_path': img.get('image_path', 'N/A')
+                }
+                
+                # Ajouter les informations complémentaires si disponibles
+                additional_info = ann.get('additional_info', {})
+                if additional_info:
+                    patient_row['symptoms'] = additional_info.get('symptoms', '')
+                    patient_row['comorbidities'] = additional_info.get('comorbidities', '')
+                    patient_row['spo2'] = additional_info.get('spo2', '')
+                    patient_row['temperature'] = additional_info.get('temperature', '')
+                    patient_row['crp'] = additional_info.get('crp', '')
+                    patient_row['image_quality'] = additional_info.get('image_quality', '')
+                    patient_row['urgency'] = additional_info.get('urgency', '')
+                
+                patients_data.append(patient_row)
+                
+                # Données pour JSON complet
+                export_data.append({
+                    'image_id': img['id'],
+                    'patient_id': img.get('patient_id'),
+                    'image_path': img.get('image_path'),
+                    'final_label': ann.get('label'),
+                    'label_numeric': 1 if ann.get('label') == 'malade' else 0,
+                    'ground_truth': ann.get('additional_info', {}).get('ground_truth'),
+                    'confidence': ann.get('confidence'),
+                    'notes': ann.get('notes', ''),
+                    'validated_by': ann.get('user_name'),
+                    'validated_at': ann.get('created_at'),
+                    'patient_metadata': patient.get('metadata', {}) if patient else {},
+                    'original_prediction': pred if pred else None,
+                    'clinical_metadata': additional_info
+                })
+            
+            # Générer les exports selon le format demandé
+            if export_format in ['CSV (Analyses statistiques)', 'Tous les formats']:
+                csv_path = os.path.join(export_dir, f"patients_data_{timestamp}.csv")
+                df = pd.DataFrame(patients_data)
+                df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+                results['CSV'] = csv_path
+            
+            if export_format in ['JSON complet', 'Tous les formats']:
+                json_path = os.path.join(export_dir, f"export_complet_{timestamp}.json")
+                export_metadata = {
+                    'export_date': datetime.now().isoformat(),
+                    'total_samples': len(export_data),
+                    'pneumonia_count': sum(1 for d in export_data if d['final_label'] == 'malade'),
+                    'healthy_count': sum(1 for d in export_data if d['final_label'] == 'sain'),
+                    'export_version': '1.0',
+                    'samples': export_data
+                }
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(export_metadata, f, indent=2, ensure_ascii=False, default=str)
+                results['JSON'] = json_path
+            
+            if export_format in ['Structure de dossiers (Réentraînement)', 'Tous les formats']:
+                # Créer la structure de dossiers pour le réentraînement
+                training_dir = os.path.join(export_dir, 'training_data')
+                
+                if split_dataset:
+                    train_dir = os.path.join(training_dir, 'train')
+                    val_dir = os.path.join(training_dir, 'validation')
+                    test_dir = os.path.join(training_dir, 'test')
+                    
+                    for label in ['malade', 'sain']:
+                        os.makedirs(os.path.join(train_dir, label), exist_ok=True)
+                        os.makedirs(os.path.join(val_dir, label), exist_ok=True)
+                        os.makedirs(os.path.join(test_dir, label), exist_ok=True)
+                else:
+                    for label in ['malade', 'sain']:
+                        os.makedirs(os.path.join(training_dir, label), exist_ok=True)
+                
+                # Créer le fichier labels.csv
+                labels_data = []
+                
+                # Copier les images et créer les labels
+                import random
+                random.seed(42)  # Pour la reproductibilité
+                
+                for v in validated_images:
+                    img = v['image']
+                    ann = v['annotation']
+                    label = ann.get('label', 'sain')
+                    image_path = img.get('image_path')
+                    
+                    if not image_path or not os.path.exists(image_path):
+                        continue
+                    
+                    # Déterminer le dossier de destination
+                    if split_dataset:
+                        rand = random.random()
+                        if rand < 0.7:
+                            dest_folder = 'train'
+                        elif rand < 0.85:
+                            dest_folder = 'validation'
+                        else:
+                            dest_folder = 'test'
+                    else:
+                        dest_folder = None
+                    
+                    # Copier l'image
+                    if include_images:
+                        file_ext = os.path.splitext(image_path)[1] or '.png'
+                        new_filename = f"{img['id']}{file_ext}"
+                        
+                        if dest_folder:
+                            dest_path = os.path.join(training_dir, dest_folder, label, new_filename)
+                        else:
+                            dest_path = os.path.join(training_dir, label, new_filename)
+                        
+                        try:
+                            shutil.copy2(image_path, dest_path)
+                            labels_data.append({
+                                'image_path': os.path.relpath(dest_path, training_dir),
+                                'label': label,
+                                'label_numeric': 1 if label == 'malade' else 0,
+                                'patient_id': img.get('patient_id'),
+                                'image_id': img['id']
+                            })
+                        except Exception as e:
+                            st.warning(f"Impossible de copier {image_path}: {e}")
+                    else:
+                        # Juste ajouter la référence
+                        labels_data.append({
+                            'image_path': image_path,
+                            'label': label,
+                            'label_numeric': 1 if label == 'malade' else 0,
+                            'patient_id': img.get('patient_id'),
+                            'image_id': img['id']
+                        })
+                
+                # Sauvegarder labels.csv
+                labels_df = pd.DataFrame(labels_data)
+                labels_csv_path = os.path.join(training_dir, 'labels.csv')
+                labels_df.to_csv(labels_csv_path, index=False, encoding='utf-8-sig')
+                
+                # Créer un fichier ZIP
+                zip_path = os.path.join(export_dir, f"training_data_{timestamp}.zip")
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(training_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, training_dir)
+                            zipf.write(file_path, arcname)
+                
+                results['Structure de dossiers'] = zip_path
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"Erreur lors de l'export: {str(e)}")
+            return None
+    
     def _render_results_tab(self):
         """Onglet de résultats et export"""
         st.subheader("Résultats Finalisés et Export")
@@ -612,68 +808,64 @@ class DoctorView:
             st.success(f"✅ {len(selected_images)} patient(s) marqué(s) comme finalisé(s)")
             st.rerun()
         
-        # Export pour entraînement
-        st.subheader("Export pour Entraînement")
+        # Export complet pour réentraînement et analyses
+        st.divider()
+        st.subheader("📥 Export Complet pour Réentraînement et Analyses")
         
-        finalized_images = [img for img in images if img.get('status') == 'finalized']
-        
-        if finalized_images:
-            st.write(f"**{len(finalized_images)} patient(s) finalisé(s) disponible(s) pour export**")
-            
-            # Résumé de ce qui sera exporté
-            finalized_annotations = {}
-            for img in finalized_images:
-                ann = self.data_manager.get_annotation_by_image(img['id'])
-                if ann and ann.get('user_role') == 'Médecin':
-                    finalized_annotations[img['id']] = ann
-            
-            if finalized_annotations:
-                labels_changed = 0
-                for img_id, ann in finalized_annotations.items():
-                    img = self.data_manager.get_image(img_id)
-                    pred = self.data_manager.get_prediction_by_image(img_id)
-                    if pred and pred.get('label') != ann.get('label'):
-                        labels_changed += 1
-                
-                st.info(f"""
-                **Résumé de l'export:**
-                - Nombre de cas: {len(finalized_annotations)}
-                - Étiquettes modifiées: {labels_changed}
-                - Pneumonie confirmée: {sum(1 for a in finalized_annotations.values() if a.get('label') == 'malade')}
-                - Absence de pneumonie: {sum(1 for a in finalized_annotations.values() if a.get('label') == 'sain')}
-                """)
-                
-                if st.button("📥 Préparer l'Export pour Entraînement", type="primary"):
-                    # Préparer les données pour l'export
-                    export_data = []
-                    for img_id, ann in finalized_annotations.items():
-                        img = self.data_manager.get_image(img_id)
-                        export_data.append({
-                            'image_id': img_id,
-                            'image_path': img.get('image_path'),
-                            'patient_id': img.get('patient_id'),
-                            'final_label': ann.get('label'),
-                            'ground_truth': ann.get('additional_info', {}).get('ground_truth'),
-                            'confidence': ann.get('confidence'),
-                            'notes': ann.get('notes', ''),
-                            'validated_by': ann.get('user_name'),
-                            'validated_at': ann.get('created_at')
-                        })
-                    
-                    # Sauvegarder dans un fichier JSON
-                    import json
-                    export_file = "data/export_training_data.json"
-                    os.makedirs("data", exist_ok=True)
-                    with open(export_file, 'w', encoding='utf-8') as f:
-                        json.dump(export_data, f, indent=2, ensure_ascii=False, default=str)
-                    
-                    st.success(f"✅ Données exportées dans {export_file}")
-                    st.download_button(
-                        label="📥 Télécharger le fichier d'export",
-                        data=json.dumps(export_data, indent=2, ensure_ascii=False, default=str),
-                        file_name=f"training_data_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
+        # Utiliser les images validées (pas seulement finalisées) pour l'export
+        if not validated_images:
+            st.info("Aucun patient validé disponible pour l'export")
         else:
-            st.info("Aucun patient finalisé pour le moment")
+            st.write(f"**{len(validated_images)} patient(s) validé(s) disponible(s) pour export**")
+            
+            # Options d'export
+            export_format = st.radio(
+                "Format d'export",
+                ['CSV (Analyses statistiques)', 'Structure de dossiers (Réentraînement)', 'JSON complet', 'Tous les formats'],
+                help="Choisissez le format d'export selon votre besoin"
+            )
+            
+            include_images = st.checkbox(
+                "Inclure les images dans l'export",
+                value=True,
+                help="Crée une copie des images dans le dossier d'export (pour réentraînement)"
+            )
+            
+            split_dataset = st.checkbox(
+                "Séparer en train/validation/test",
+                value=False,
+                help="Divise automatiquement les données (70% train, 15% validation, 15% test)"
+            )
+            
+            if st.button("📥 Générer l'Export", type="primary"):
+                with st.spinner("Préparation de l'export en cours..."):
+                    export_results = self._generate_complete_export(
+                        validated_images,
+                        export_format,
+                        include_images,
+                        split_dataset
+                    )
+                    
+                    if export_results:
+                        st.success("✅ Export généré avec succès !")
+                        
+                        # Afficher les fichiers générés
+                        for file_type, file_path in export_results.items():
+                            if file_path and os.path.exists(file_path):
+                                file_size = os.path.getsize(file_path) / (1024 * 1024)  # Taille en MB
+                                st.write(f"**{file_type}:** {os.path.basename(file_path)} ({file_size:.2f} MB)")
+                                
+                                # Bouton de téléchargement
+                                with open(file_path, 'rb') as f:
+                                    st.download_button(
+                                        label=f"📥 Télécharger {file_type}",
+                                        data=f.read(),
+                                        file_name=os.path.basename(file_path),
+                                        mime="application/zip" if file_path.endswith('.zip') else 
+                                             "text/csv" if file_path.endswith('.csv') else
+                                             "application/json",
+                                        key=f"download_{file_type}"
+                                    )
+                    else:
+                        st.error("❌ Erreur lors de la génération de l'export")
 
