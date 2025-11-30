@@ -26,7 +26,7 @@ if 'current_user_name' not in st.session_state:
     st.session_state.current_user_name = None
 
 def main():
-    st.title("🫁 Système d'Analyse de Radiographies Thoraciques")
+    st.title("🫁 Système d'Analyse de Radiographies Thoraciques pour la détection de la pneumonie")
     
     # Sélection du rôle
     if st.session_state.current_user_role is None:
